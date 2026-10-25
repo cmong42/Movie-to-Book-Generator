@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <title>Movie to Book Generator</title>
+  <style>
+    #output { white-space: pre-wrap; background:#fafafa; padding:1rem; border-radius:8px; margin-top:1rem; width: 500px; height: 450px; margin: 1em 2em; overflow-y: scroll; }
+    #downloadBtn { margin-top: 0.5rem; }
+    /* Simple suggestion list */
+    #suggestions { position: absolute; background:white; border:1px solid #ccc; z-index:10; width:100%; }
+    #suggestions li { padding:0.5rem; cursor:pointer; }
+    #suggestions li:hover { background:#f0f0f0; }
+    .relative { position:relative; }
+  </style>
+</head>
+<body>
+  <h1>Movie to Book Generator</h1>
+  <br />
+  <div class="container">
+    <form id="generateForm" class="relative">
+      <div>
+        <label for="wikipedia_article">Wikipedia Article Title:</label>
+        <input type="text" id="wikipedia_article" name="wikipedia_article" required autocomplete="off">
+        <ul id="suggestions" hidden></ul>
+      </div>
+      <div>
+        <label for="num_pages"># of Pages:</label>
+        <input type="number" id="num_pages" name="num_pages" min="1" required>
+      </div>
+      <div>
+        <label for="format">Format:</label>
+        <select id="format" name="format" required>
+          <option value="Novel">Novel</option>
+          <option value="Play">Play</option>
+          <option value="Poem">Poem</option>
+        </select>
+      </div>
+      <div>
+        <label for="additional-instructions">Additional Instructions (Optional)</label>
+        <input type="text" id="additional-instructions" name="additional-instructions" />
+      </div>
+      <div>
+        <button type="submit">Generate</button>
+      </div>
+    </form>
+
+    <div class="container-col">
+      <pre id="output"></pre>
+      <button id="downloadBtn" disabled>Download File</button>
+    </div>
+  </div>
+  <script>
+    // ---- Auto‑complete ----------------------------------------------
+    const articleInput = document.getElementById('wikipedia_article');
+    const suggestions = document.getElementById('suggestions');
+    let debounceTimer;
+
+    articleInput.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      const q = articleInput.value.trim();
+      if (!q) {
+        suggestions.hidden = true;
+        return;
+      }
+      debounceTimer = setTimeout(() => {
+        fetch(`/wikipedia_lookup?q=${encodeURIComponent(q)}`)
+          .then(r => r.json())
+          .then(list => {
+            suggestions.innerHTML = '';
+            if (list.length === 0) {
+              suggestions.hidden = true;
+              return;
+            }
+            list.forEach(title => {
+              const li = document.createElement('li');
+              li.textContent = title;
+              li.onclick = () => {
+                articleInput.value = title;
+                suggestions.hidden = true;
+              };
+              suggestions.appendChild(li);
+            });
+            suggestions.hidden = false;
+          })
+          .catch(err => console.error(err));
+      }, 300); // 300 ms debounce
+    });
+
+    // Close suggestions when clicking outside
+    document.addEventListener('click', e => {
+      if (!articleInput.contains(e.target)) {
+        suggestions.hidden = true;
+      }
+    });
+
+    // ---- Stream handling ---------------------------------------------
+    const form = document.getElementById('generateForm');
+    const outputEl = document.getElementById('output');
+    const downloadBtn = document.getElementById('downloadBtn');
+    let fullText = '';
+
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      outputEl.textContent = '';
+      downloadBtn.disabled = true;
+      fullText = '';
+
+      const formData = new FormData(form);
+      try {
+        const response = await fetch('/generate-stream', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) {
+          outputEl.textContent = `Error: ${response.status} ${response.statusText}`;
+          return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          outputEl.textContent += chunk;
+          fullText += chunk;
+        }
+
+        downloadBtn.disabled = false; // ready to download
+
+      } catch (err) {
+        outputEl.textContent = `Fetch failed: ${err}`;
+      }
+    });
+
+    // ---- Download button ---------------------------------------------
+    downloadBtn.addEventListener('click', () => {
+      const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'generated.txt';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    });
+  </script>
+</body>
+</html>
